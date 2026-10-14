@@ -1,7 +1,10 @@
+import os
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
+import numpy as np
+import cv2
 
 
 # Device
@@ -19,37 +22,31 @@ transform = transforms.Compose([
 ])
 
 
-# Load ResNet50 architecture
-model = models.resnet50(weights=None)
-
-model.fc = nn.Linear(
-    model.fc.in_features,
-    1
-)
+# -------------------------------------------------------------------
+# Lazy model loader — model is only loaded the first time it is needed
+# -------------------------------------------------------------------
+_model = None
 
 
-import os
+def _get_model():
+    """Load and cache the ResNet50 model on first use."""
+    global _model
+    if _model is None:
+        BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        model_path = os.path.join(BASE_DIR, "models", "resnet50_pneumonia.pth")
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-model_path = os.path.join(
-    BASE_DIR,
-    "models",
-    "resnet50_pneumonia.pth"
-)
-
-model.load_state_dict(
-    torch.load(
-        model_path,
-        map_location=device
-    )
-)
-
-model = model.to(device)
-model.eval()
+        m = models.resnet50(weights=None)
+        m.fc = nn.Linear(m.fc.in_features, 1)
+        m.load_state_dict(
+            torch.load(model_path, map_location=device, weights_only=True)
+        )
+        _model = m.to(device).eval()
+    return _model
 
 
 def predict_image(image_input):
+    model = _get_model()
+
     # Accept either an uploaded image or a file path
     if isinstance(image_input, Image.Image):
         image = image_input.convert("RGB")
@@ -67,18 +64,7 @@ def predict_image(image_input):
 
     return prediction, probability
 
-if __name__ == "__main__":
 
-    test_image = "../test_image.jpeg"
-
-    prediction, probability = predict_image(test_image)
-
-    print("Prediction:", prediction)
-    print("Pneumonia Probability:", f"{probability:.4f}")
-
-
-import numpy as np
-import cv2
 def generate_gradcam(image_input):
     """
     Generate a Grad-CAM heatmap for the uploaded X-ray.
@@ -86,6 +72,7 @@ def generate_gradcam(image_input):
         original_image: RGB PIL image
         overlay_image: RGB numpy array with heatmap overlay
     """
+    model = _get_model()
 
     # 1. Load the image
     if isinstance(image_input, Image.Image):
@@ -177,3 +164,10 @@ def generate_gradcam(image_input):
     finally:
         forward_handle.remove()
         backward_handle.remove()
+
+
+if __name__ == "__main__":
+    test_image = "../test_image.jpeg"
+    prediction, probability = predict_image(test_image)
+    print("Prediction:", prediction)
+    print("Pneumonia Probability:", f"{probability:.4f}")
